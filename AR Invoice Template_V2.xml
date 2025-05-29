@@ -1,0 +1,522 @@
+<?xml version="1.0"?>
+<!DOCTYPE pdf PUBLIC "-//big.faceless.org//report" "report-1.1.dtd">
+<pdf>
+
+    <head>
+        <link name="NotoSans" type="font" subtype="truetype" src="${nsfont.NotoSans_Regular}" src-bold="${nsfont.NotoSans_Bold}" src-italic="${nsfont.NotoSans_Italic}" src-bolditalic="${nsfont.NotoSans_BoldItalic}" bytes="2" />
+        <#if .locale=="zh_CN">
+            <link name="NotoSansCJKsc" type="font" subtype="opentype" src="${nsfont.NotoSansCJKsc_Regular}" src-bold="${nsfont.NotoSansCJKsc_Bold}" bytes="2" />
+            <#elseif .locale=="zh_TW">
+                <link name="NotoSansCJKtc" type="font" subtype="opentype" src="${nsfont.NotoSansCJKtc_Regular}" src-bold="${nsfont.NotoSansCJKtc_Bold}" bytes="2" />
+                <#elseif .locale=="ja_JP">
+                    <link name="NotoSansCJKjp" type="font" subtype="opentype" src="${nsfont.NotoSansCJKjp_Regular}" src-bold="${nsfont.NotoSansCJKjp_Bold}" bytes="2" />
+                    <#elseif .locale=="ko_KR">
+                        <link name="NotoSansCJKkr" type="font" subtype="opentype" src="${nsfont.NotoSansCJKkr_Regular}" src-bold="${nsfont.NotoSansCJKkr_Bold}" bytes="2" />
+                        <#elseif .locale=="th_TH">
+                            <link name="NotoSansThai" type="font" subtype="opentype" src="${nsfont.NotoSansThai_Regular}" src-bold="${nsfont.NotoSansThai_Bold}" bytes="2" />
+        </#if>
+        <macrolist>
+            <macro id="nlheader">
+                <table class="header" style="width: 100%;font-family:Calibri;">
+                    <#if record.custbody_template_selection=="SmartNews International, Inc">
+                        <tr>
+                            <td font-size="22px">SmartNews International, Inc.</td>
+                            <td font-size="26px" align="right" color="#62A6C2">INVOICE</td>
+                        </tr>
+                        <tr margin-top="5px">
+                            <td align="left">
+                                291 Alma St. <br />
+                                Palo Alto, CA 94301<br />
+                                <a href="https://www.smartnews.com/en/">https://www.smartnews.com/en/</a>
+                            </td>
+                            <td align="right">
+                                <table>
+                                    <tr height="2px">
+                                        <td width="50%">DATE &nbsp;&nbsp;</td>
+                                        <td width="150px" align="left" border-left="1px" border-right="1px" border-top="1px" border-bottom="1px"> ${(record.trandate)?string.long}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>INVOICE # &nbsp;&nbsp;</td>
+                                        <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${record.tranid}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>DUE DATE &nbsp;&nbsp;</td>
+                                        <#if record.duedate?has_content>
+                                            <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${(record.duedate)?string.long}</td>
+                                            <#else>
+                                                <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px"></td>
+                                        </#if>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                        <#elseif record.custbody_template_selection=="SmartNews, Inc">
+                            <tr>
+                                <td font-size="22px">Smartnews, Inc. </td>
+                                <td font-size="26px" align="right" color="#62A6C2">INVOICE</td>
+                            </tr>
+                            <tr margin-top="5px">
+                                <td align="left">
+                                    Ichigo Jingumae Building 2F <br />
+                                    6-25-16 Jingumae, Shibuya-ku<br />
+                                    Tokyo, Japan 150-0001 <br />
+                                    <a href="https://www.smartnews.com/en/">https://www.smartnews.com/en/</a>
+                                </td>
+                                <td align="right">
+                                    <table>
+                                        <tr height="2px">
+                                            <td width="50%">DATE &nbsp;&nbsp;</td>
+                                            <td width="150px" align="left" border-left="1px" border-right="1px" border-top="1px" border-bottom="1px"> ${(record.trandate)?string.long}</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INVOICE # &nbsp;&nbsp;</td>
+                                            <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${record.tranid}</td>
+                                        </tr>
+                                        <tr>
+                                            <td>DUE DATE &nbsp;&nbsp;</td>
+                                            <#if record.duedate?has_content>
+                                                <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${(record.duedate)?string.long}</td>
+                                                <#else>
+                                                    <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px"></td>
+                                            </#if>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                            <#elseif record.custbody_template_selection=="Smartnews Singapore Pte. Ltd">
+                                <tr>
+                                    <td font-size="22px">Smartnews Singapore Pte. Ltd</td>
+                                    <td font-size="26px" align="right" color="#62A6C2">INVOICE</td>
+                                </tr>
+                                <tr margin-top="5px">
+                                    <td align="left">
+                                        63 Chulia Street, OCBC Centre East, #13-01 <br />
+                                        Singapore 049514<br />
+                                        <a href="https://www.smartnews.com/en/">https://www.smartnews.com/en/</a>
+                                    </td>
+                                    <td align="right">
+                                        <table>
+                                            <tr height="2px">
+                                                <td width="50%">DATE &nbsp;&nbsp;</td>
+                                                <td width="150px" align="left" border-left="1px" border-right="1px" border-top="1px" border-bottom="1px"> ${(record.trandate)?string.long}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>INVOICE # &nbsp;&nbsp;</td>
+                                                <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${record.tranid}</td>
+                                            </tr>
+
+                                            <tr>
+                                                <td>DUE DATE &nbsp;&nbsp;</td>
+                                                <#if record.duedate?has_content>
+                                                    <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${(record.duedate)?string.long}</td>
+                                                    <#else>
+                                                        <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px"></td>
+                                                </#if>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <#else>
+                                    <tr>
+                                        <td font-size="22px">SmartNews International, Inc.</td>
+                                        <td font-size="26px" align="right" color="#62A6C2">INVOICE</td>
+                                    </tr>
+                                    <tr margin-top="5px">
+                                        <td align="left">
+                                            291 Alma St. <br />
+                                            Palo Alto, CA 94301<br />
+                                            <a href="https://www.smartnews.com/en/">https://www.smartnews.com/en/</a>
+                                        </td>
+                                        <td align="right">
+                                            <table>
+                                                <tr height="2px">
+                                                    <td width="50%">DATE &nbsp;&nbsp;</td>
+                                                    <td width="150px" align="left" border-left="1px" border-right="1px" border-top="1px" border-bottom="1px"> ${(record.trandate)?string.long}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>INVOICE # &nbsp;&nbsp;</td>
+                                                    <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${record.tranid}</td>
+                                                </tr>
+
+                                                <tr>
+                                                    <td>DUE DATE &nbsp;&nbsp;</td>
+                                                    <#if record.duedate?has_content>
+                                                        <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px">${(record.duedate)?string.long}</td>
+                                                        <#else>
+                                                            <td width="150px" border-left="1px" align="left" border-right="1px" border-bottom="1px"></td>
+                                                    </#if>
+                                                </tr>
+                                            </table>
+                                        </td>
+                                    </tr>
+                    </#if>
+                </table>
+            </macro>
+            <macro id="nlfooter">
+                <table class="footer" style="width: 100%;">
+                    <tr>
+                        <td></td>
+                        <td align="right">
+                            <pagenumber /> of
+                            <totalpages />
+                        </td>
+                    </tr>
+                </table>
+            </macro>
+
+        </macrolist>
+        <style type="text/css">
+            * {
+                <#if .locale=="zh_CN">font-family: NotoSans, NotoSansCJKsc, sans-serif;
+                <#elseif .locale=="zh_TW">font-family: NotoSans, NotoSansCJKtc, sans-serif;
+                <#elseif .locale=="ja_JP">font-family: NotoSans, NotoSansCJKjp, sans-serif;
+                <#elseif .locale=="ko_KR">font-family: NotoSans, NotoSansCJKkr, sans-serif;
+                <#elseif .locale=="th_TH">font-family: NotoSans, NotoSansThai, sans-serif;
+                <#else>font-family: NotoSans, sans-serif;
+                </#if>
+            }
+
+            table {
+                font-size: 9pt;
+                table-layout: fixed;
+            }
+
+            th {
+                font-weight: bold;
+                font-size: 8pt;
+                vertical-align: middle;
+                padding: 5px 6px 3px;
+                background-color: #e3e3e3;
+                color: #333333;
+            }
+
+            td {
+                padding: 4px 6px;
+            }
+
+            td p {
+                align: left
+            }
+
+            b {
+                font-weight: bold;
+                color: #333333;
+            }
+
+            table.header td {
+                padding: 2px;
+                font-size: 10pt;
+            }
+
+            table.footer td {
+                padding: 0px;
+                font-size: 8pt;
+            }
+
+            table.itemtable th {
+                padding-bottom: 10px;
+                padding-top: 10px;
+            }
+
+            table.body td {
+                padding-top: 2px;
+            }
+
+            table.total {
+                page-break-inside: avoid;
+            }
+
+            tr.totalrow {
+                background-color: #e3e3e3;
+                line-height: 200%;
+            }
+
+            td.totalboxtop {
+                font-size: 12pt;
+                background-color: #e3e3e3;
+            }
+
+            td.addressheader {
+                font-size: 8pt;
+                padding-top: 6px;
+                padding-bottom: 2px;
+            }
+
+            td.address {
+                padding-top: 0px;
+            }
+
+            td.totalboxmid {
+                font-size: 28pt;
+                padding-top: 20px;
+                background-color: #e3e3e3;
+            }
+
+            td.totalboxbot {
+                background-color: #e3e3e3;
+                font-weight: bold;
+            }
+
+            span.title {
+                font-size: 28pt;
+            }
+
+            span.number {
+                font-size: 16pt;
+            }
+
+            span.itemname {
+                font-weight: bold;
+                line-height: 150%;
+            }
+
+            hr {
+                width: 100%;
+                color: #d3d3d3;
+                background-color: #d3d3d3;
+                height: 1px;
+            }
+        </style>
+    </head>
+
+    <body font-family="Calibri" header="nlheader" header-height="12%" footer="nlfooter" footer-height="8%" padding="0.5in 0.5in 0.5in 0.5in" size="Letter">
+
+        <table class="header" style="width: 100%;font-family:Calibri; margin-top: 10px;">
+            <tr>
+                <#if record.billaddress?has_content>
+                    <td height="5px" width="50%" background-color="#7797A4" color="white" align="left"><b>BILL TO</b></td>
+                    <#else>
+                        <td height="5px" width="50%" color="white"></td>
+                </#if>
+            </tr>
+            <tr>
+                <#if record.billaddress?has_content>
+                    <td width="50%" align="left">${record.billaddress}</td>
+                    <#else>
+                        <td width="50%" align="left"></td>
+                </#if>
+                <#if record.otherrefnum?has_content>
+                    <td width="50%" align="right">
+                        <table>
+                            <tr height="2px">
+                                <td width="55%">PO#: &nbsp;</td>
+                                <td width="150px" align="left" padding="1px"> ${record.otherrefnum}</td>
+                            </tr>
+                        </table>
+                    </td>
+                <#else>
+                        <td width="50%" align="right">
+                            <table>
+                                <tr height="2px">
+                                    <td width="55%"></td>
+                                    <td width="150px"></td>
+                                </tr>
+                            </table>
+                        </td>
+                </#if>
+            </tr>
+        </table>
+        <#if record.item?has_content>
+            <#assign hasSitm28=false />
+            <#assign hasSitm026=false />
+            <#assign hasSitm020=false />
+            <#assign hasSitm021=false />
+
+            <#list record.item as item>
+                <#if item.item=="slitm-028 APAC_first_party_sales">
+                    <#assign hasSitm28=true />
+                    <#elseif item.item=="slitm-026">
+                        <#assign hasSitm026=true />
+                        <#elseif item.item=="slitm-020 direct_sales">
+                            <#assign hasSitm020=true />
+                            <#elseif item.item=="slitm-021 programmatic_sales">
+                                <#assign hasSitm021=true />
+                </#if>
+            </#list>
+
+            <#if record.custbody_ad_business_team_sales=="US Sales" || record.custbody_template_selection=="SmartNews International, Inc" >
+                <#assign itemMap={} />
+                <#list record.item as item>
+                    <#assign itemName=item.item />
+                    <#assign itemAmount=item.amount />
+                    <#assign itemQuantity=item.quantity />
+                    <#assign temp="Ad Manager Spend" />
+                    <#assign itemDescription=(record.custbody_ad_business_team_sales=="US Sales" || record.custbody_template_selection=="SmartNews International, Inc" )?then(temp, item.description) />
+                    <#if itemMap[itemName]?has_content>
+                        <#assign currentItem=itemMap[itemName] />
+                        <#assign newAmount=currentItem.amount + itemAmount />
+                        <#assign newQuantity=itemQuantity />
+                        <#assign itemMap=itemMap + {itemName: {"description": itemDescription, "amount" : newAmount, "quantity" : newQuantity}} />
+                        <#else>
+                            <#assign itemMap=itemMap + {itemName: {"description": itemDescription, "amount" : itemAmount, "quantity" : itemQuantity}} />
+                    </#if>
+                </#list>
+
+                <table class="itemtable" style="width: 100%; margin-top: 10px;"><!-- start items --> 
+                    <#list itemMap?keys as itemName>
+                        <#if itemName_index==0>
+                            <thead>
+                                <tr background-color="#7797A4">
+                                    <th background-color="#7797A4" color="white" border-left="1px" border-top="1px" border-bottom="1px" align="center" width="60%">DESCRIPTION</th>
+                                    <th background-color="#7797A4" color="white" border-left="1px" border-top="1px" border-bottom="1px" align="center" width="20%">QUANTITY</th>
+                                    <th background-color="#7797A4" color="white" border-left="1px" border-top="1px" border-bottom="1px" border-right="1px" align="center" width="20%">AMOUNT</th>
+                                </tr>
+                            </thead>
+                        </#if>
+                        <#assign item=itemMap[itemName] />
+                        <tr>
+							<#assign line_amount = item.amount?string["#,##0.00"]/>
+                            <td border-left="1px" border-bottom="1px" width="30%">${item.description}</td>
+                            <td border-left="1px" border-bottom="1px" width="10%" align="center">${item.quantity}</td>
+                            <td border-left="1px" border-bottom="1px" border-right="1px" width="10%" align="right">${record.currency} ${line_amount}</td>
+                        </tr>
+                    </#list>
+                    <tr>
+						<#assign record_subtotal = record.subtotal?string["#,##0.00"]/>
+                        <td colspan="2" align="right"><b>Subtotal:</b></td>
+                        <td colspan="3" align="right">${record.currency} ${record_subtotal}</td>
+                    </tr>
+                    <tr>
+                        <#if record.taxtotal !=0.00>
+							<#assign record_taxtotal = record.taxtotal?string["#,##0.00"]/>
+                            <td colspan="2" align="right"><b>Tax Total:</b></td>
+                            <td colspan="3" align="right">${record.currency} ${record_taxtotal}/td>
+                        <#else>
+                            <td colspan="2" align="right"><b>Tax Total:</b></td>
+                            <td colspan="3" align="right"> ${record.currency} 0.00</td>
+                        </#if>
+                    </tr>
+                    <tr>
+						<#assign record_total = record.total?string["#,##0.00"]/>
+                        <td colspan="2" align="right"><b>Total:</b></td>
+                        <td colspan="3" align="right">${record.currency} ${record_total}</td>
+                    </tr>
+                </table> 
+                <#else>
+                    <table class="itemtable" style="width: 100%; margin-top: 10px;"><!-- start items -->
+                        <#list record.item as item>
+                            <#if item_index==0>
+                                <thead>
+                                    <tr background-color="#7797A4">
+                                        <th background-color="#7797A4" color="white" border-left="1px" border-top="1px" border-bottom="1px" align="center" width="60%">DESCRIPTION</th>
+                                        <th background-color="#7797A4" color="white" border-left="1px" border-top="1px" border-bottom="1px" align="center" width="20%">QUANTITY</th>
+                                        <th background-color="#7797A4" color="white" border-left="1px" border-top="1px" border-bottom="1px" border-right="1px" align="center" width="20%">AMOUNT</th>
+                                    </tr>
+                                </thead>
+                            </#if>
+                            <tr>
+                                <td border-left="1px" border-bottom="1px" width="30%">${item.description}</td>
+                                <td border-left="1px" border-bottom="1px" width="10%" align="center">${item.quantity}</td>
+                                <#assign default_currency_rate=item.rate?string["#,##0.00"] />
+                                <#assign default_currency_amount=item.amount?string["#,##0.00"] />
+								<#assign line_amount = item.amount?string["#,##0.00"]/>
+                                    <td border-left="1px" border-bottom="1px" border-right="1px" width="10%" align="right">${record.currency} ${line_amount}</td>
+                            </tr>
+                        </#list>
+
+                        <tr>
+						<#assign record_subtotal = record.subtotal?string["#,##0.00"]/>
+                            <td colspan="2" align="right"><b>Subtotal:</b></td>
+                            <td colspan="3" align="right">${record.currency} ${record_subtotal}</td>
+                        </tr>
+                        <tr>
+                            <#if record.taxtotal !=0.00>
+								<#assign record_taxtotal = record.taxtotal?string["#,##0.00"]/>
+                                <td colspan="2" align="right"><b>Tax Total:</b></td>
+                                <td colspan="3" align="right">${record.currency} ${record_taxtotal}</td>
+                            <#else>
+                                <td colspan="2" align="right"><b>Tax Total:</b></td>
+                                <td colspan="3" align="right">${record.currency} 0.00</td>
+                            </#if>
+                        </tr>
+                        <tr>
+							<#assign record_total = record.total?string["#,##0.00"]/>
+                            <td colspan="2" align="right"><b>Total:</b></td>
+                            <td colspan="3" align="right">${record.currency} ${record_total}</td>
+                        </tr>
+                    </table>
+            </#if>
+        </#if>
+		
+		<!-- Start: Added as part of the the user request for the JIRA BSS-762 to segregate the print based on Template selection on Invoice -->
+		
+        <table class="total" style="width: 100%; margin-top: 10px;">
+            <tr>
+                <#if record.custbody_snii_bank_details.custrecord_preferred=true>
+					<#if record.custbody_template_selection=="SmartNews International, Inc">
+						<td width="60%">
+							<table border="1px" style="width: 100%; margin-top: 10px;">
+								<tr>
+									<td background-color="#7797A4" border-bottom="1px"  align="left" height="16"><b>OTHER COMMENTS</b></td>
+								</tr>
+								<tr>
+									<td>
+										<p>Total payment due in 30 days</p><br/>
+										<p><b>Wire Payment Information:</b></p> 
+										Beneficiary Bank: ${record.custbody_snii_bank_details.custrecord_beneficiary_bank_name}
+										<#if record.custbody_snii_bank_details.custrecord_beneficiary?has_content>
+											<p>Beneficiary Account Name: ${record.custbody_snii_bank_details.custrecord_beneficiary}</p>
+										</#if>
+										<p>Beneficiary Account Address:<br/> 144 2nd Street. Suite 200. San Francisco. CA.94105</p> 
+										<#if record.custbody_snii_bank_details.custrecord_beneficiary_account_number?has_content>
+											<p style="line-height: 1.2;">Beneficiary Account Number: ${record.custbody_snii_bank_details.custrecord_beneficiary_account_number}</p>
+										</#if>
+										<#if record.custbody_snii_bank_details.custrecord_routing_number_aba?has_content>
+											<p style="line-height: 1.2;"> Routing Number (ABA#): ${record.custbody_snii_bank_details.custrecord_routing_number_aba}</p>
+										</#if>
+										<#if record.custbody_snii_bank_details.custrecord_swift_number?has_content>
+											<p style="line-height: 1.2;"> SWIFT Number: ${record.custbody_snii_bank_details.custrecord_swift_number}</p>
+										</#if>
+										<br/>
+										<p>For payment inquiries or remittance, please contact us at: <br/> us-ad-billing@smartnews.com </p><br/>
+									</td>
+								</tr>
+							</table>
+						</td>
+					<#else>
+						<td width="60%">
+							<table border="1px" style="width: 100%; margin-top: 10px;">
+								<tr>
+									<td border-bottom="1px" background-color="#7797A4" height="16">PAYMENT INFORMATION</td>
+								</tr>
+								<tr>
+									<td>
+										<p>Beneficiary: ${record.custbody_snii_bank_details.custrecord_beneficiary}</p>
+										<p>Beneficiary Bank: ${record.custbody_snii_bank_details.custrecord_beneficiary_bank_name}</p>
+										<#if record.custbody_snii_bank_details.custrecord_beneficiary_account_number?has_content>
+											<p>Beneficiary Account Number: ${record.custbody_snii_bank_details.custrecord_beneficiary_account_number}</p>
+										</#if>
+										<#if record.custbody_snii_bank_details.custrecord_routing_number_aba?has_content>
+											<p>Routing Number (ABA#): ${record.custbody_snii_bank_details.custrecord_routing_number_aba}</p>
+										</#if>
+										<#if record.custbody_snii_bank_details.custrecord_swift_number?has_content>
+											<p>SWIFT Number: ${record.custbody_snii_bank_details.custrecord_swift_number}</p>
+										</#if>
+									</td>
+								</tr>
+							</table>
+						</td>
+					</#if>
+                </#if>
+                <td color="white" width="2%">space</td>
+                <td width="38%" vertical-align="middle" align="right">
+                    <table>
+                    </table>
+                </td>
+            </tr>
+        </table>
+		
+		<!-- End: Added as part of the the user request for the JIRA BSS-762 to segregate the print based on Template selection on Invoice -->
+		
+        <table class="total" style="width: 100%; margin-top: 20px;">
+            <tr>
+                <td width="100%" align="center"><b>
+                        Thank You For Your Business!
+                    </b></td>
+
+            </tr>
+
+        </table>
+
+    </body>
+</pdf>
