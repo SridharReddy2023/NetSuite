@@ -1,0 +1,1736 @@
+/**
+ * @NApiVersion 2.x
+ * @NScriptType MapReduceScript
+ * @NModuleScope SameAccount
+ *
+ * SUMMARY OF CHANGES FROM LEGACY SCRIPT:
+ * - Refactored for readability and maintainability
+ * - Reduced logic in map stage (grouping only)
+ * - Centralized billing and bonus logic in reduce stage
+ * - Simplified CSV parsing and date handling
+ * - Removed unused UI/serverWidget dependencies
+ */
+
+define([
+    'N/record', 'N/search', 'N/file', 'N/format', './papaparse.min.js', 'N/runtime', 'N/email'
+], function(record, search, file, format, Papa, runtime, email) {
+
+    /* ==========================================================
+     * CONSTANTS
+     * Centralized configuration replaces hard-coded values
+     * used throughout the legacy script.
+     * ========================================================== */
+
+    var FOLDER_PENDING = 733; // Incoming billing files
+    var FOLDER_PROCESSED = 732; // Successfully processed files
+    var FOLDER_ERROR = 734; // Error CSV output
+
+    var SUBSIDIARY_ID = 4; // SmartNews International Inc.
+    var DEPARTMENT_ID = 2006; // A00391 CEO Approver : A00001 CEO : A00475 Business & Operations : A00063 US Media Business : A00309 US Media Partnerships
+    var TAX_CODE = 7; // tax exemption
+    var CURRENCY_ID = 2; // USD
+    var PUB_BILL_FORM = 149; // Custom Form ID
+
+    var BEYOND_ITEM_ID = 3640; // Beyond Bonus Non-Inventory Item
+    var BEYOND_DEPARTMENT_ID = 4204; // A00391 CEO Approver : A00001 CEO : A00011 Technology : A00463 Project Beyond
+    var BUSINESS_CATEGORY_ID = 4 // SmartNews Beyond
+	
+	var VIDEO_ITEM = 7069; // Video Beta Item
+	
+	
+
+    var EMAIL_TO = ['sridhar.syagamreddy@smartnews.com'];
+    var EMAIL_CC = ['seth.babu@smartnews.com'];
+
+    /* ==========================================================
+     * UTILITIES
+     * ========================================================== */
+	
+	function parseDate(dateStr) {
+    if (!dateStr) return null;
+
+    // Already a Date object ?N normalize
+    if (dateStr instanceof Date) {
+        return new Date(
+            dateStr.getFullYear(),
+            dateStr.getMonth(),
+            dateStr.getDate()
+        );
+    }
+
+    dateStr = String(dateStr).trim();
+
+    // YYYY-MM-DD or YYYY/MM/DD
+    if (/^\d{4}[-\/]\d{2}[-\/]\d{2}$/.test(dateStr)) {
+        var p = dateStr.replace(/\//g, '-').split('-');
+        return new Date(p[0], p[1] - 1, p[2]);
+    }
+
+    // DD-MM-YYYY or DD/MM/YYYY
+    if (/^\d{2}[-\/]\d{2}[-\/]\d{4}$/.test(dateStr)) {
+        var p = dateStr.replace(/\//g, '-').split('-');
+        return new Date(p[2], p[1] - 1, p[0]);
+    }
+
+    log.error('INVALID DATE FORMAT', dateStr);
+    return null;
+}
+
+    /**
+     * Escapes CSV values safely
+     */
+    function csvEscape(val) {
+        if (val === null || val === undefined) return '""';
+        val = String(val).replace(/"/g, '""').replace(/[\r\n]+/g, ' ');
+        return '"' + val + '"';
+    }
+
+    /**
+     * Business-readable action hints for Finance / Ops
+     */
+    function getActionHint(stage) {
+        switch (stage) {
+            case 'ITEM_RESOLUTION':
+                return 'Item / External Id not found in NetSuite';
+            case 'VENDOR_RESOLUTION':
+                return 'Vendor / Publisher belongs to RevShare or is not found in NetSuite';
+            case 'PRICING_TIER':
+                return 'Matching Pricing Tier for page view range is not found in NetSuite';
+            default:
+                return 'Contact Finance Systems Team';
+        }
+    }
+
+    // Generic null/empty validation helper
+    function isValid(v) {
+        return v !== null && v !== undefined && String(v).trim() !== '';
+    }
+
+    /* ==========================================================
+     * INPUT STAGE
+     * Retrieves all files from the Pending folder.
+     * Legacy script performed additional environment checks
+     * which are no longer required.
+     * ========================================================== */
+    function getInputData() {
+        var files = [];
+        search.create({
+            type: 'folder',
+            filters: [
+                ['internalid', 'anyof', FOLDER_PENDING]
+            ],
+            columns: [{
+                name: 'internalid',
+                join: 'file'
+            }]
+        }).run().each(function(r) {
+            var id = r.getValue({
+                name: 'internalid',
+                join: 'file'
+            });
+            if (id) files.push({
+                fileId: id
+            });
+            return true;
+        });
+		 log.audit('FILES FOUND', files.length);
+        return files;
+    }
+	
+	    /* ==========================================================
+     * MAP STAGE
+     * CHANGE:
+     * - Map stage now ONLY parses CSV and groups data
+     * - No billing or calculation logic here
+     * ========================================================== */
+    function map(context) {
+        var fileId = JSON.parse(context.value).fileId;
+		log.audit('LOADING FILE', fileId);
+        if (!fileId) return;
+
+        var columns = Papa.parse(
+            file.load({
+                id: fileId
+            }).getContents(), {
+                skipEmptyLines: true
+            }
+        ).data;
+
+        // Skip header row
+        for (var i = 1; i < columns.length; i++) {
+            var r = columns[i];
+            if (!r || r.length < 17) continue;
+
+            // Validate null check for required columns
+            if (!r[2] || !r[6] || !r[9] || !(r[14] || r[15])) 
+			{
+                var errRow = r.slice();
+                errRow.push(
+                    'INPUT_VALIDATION',
+                    'Missing mandatory column values',
+                    'Fix required fields in source file'
+                );
+
+                context.write({
+                    key: JSON.stringify({
+                        fileId: fileId
+                    }),
+                    value: JSON.stringify({
+                        errorData: errRow.map(csvEscape).join(',')
+                    })
+                });
+                continue;
+            }
+
+            // ? ADD THIS BLOCK
+            var smartViews = Number((r[8] || '0').replace(/,/g, ''));
+            if (smartViews === 0) {
+                continue; // Skip rows where SmartViews = 0
+            }
+			
+			var itemName = (r[2] || '').toLowerCase().replace(' video', '').trim();
+
+            // Group by file + item
+            context.write({
+                key: JSON.stringify({
+                    fileId: fileId,
+					item: itemName
+                }),
+                value: JSON.stringify({
+                    originalRow: r,
+                    siteName: r[6],
+                    siteURL: r[4] || '',
+                    siteId: r[3],
+                    smartView: smartViews,
+                    ingested: Number((r[16] ? r[16] : '0').replace(/,/g, '')),
+                    externalId: r[2],
+                    vbDate: r[9],
+                    billDueDate: r[14] || r[15]
+                })
+            });
+        }
+    }
+	
+	/* ==========================================================
+     * REDUCE STAGE
+     * CHANGE:
+     * - All aggregation, billing, and bonus logic is centralized here
+     * - Improves traceability and debugging
+     * ========================================================== */
+
+	function reduce(context) {
+		var key = JSON.parse(context.key);
+		log.audit('LOADING FILE', key);
+
+    /* ===============================
+       PASS-THROUGH MAP ERRORS
+    =============================== */
+    if (!key.item) {
+        var errorLines = [];
+
+        context.values.forEach(function (v) {
+            var val = JSON.parse(v);
+            if (val && val.errorData) {
+                errorLines.push(val.errorData);
+            }
+        });
+	
+        if (errorLines.length > 0) {
+            context.write({
+                key: key.fileId,
+                value: {
+                    errorData: errorLines.join('\r\n')
+                }
+            });
+        }
+
+        return;
+    }
+	/* ===============================
+	   INITIALIZE VARIABLES
+	=============================== */
+	var fileId = key.fileId;
+	var publisherItemName = key.item;
+	log.debug("publisherItemName", publisherItemName);
+	var hasVideo = false;
+	var videoMG = 0;
+	var vbDate = null;
+	var billDueDate = null;
+	var itemId = null;
+	var vendorId = null;
+	var monthlyFee = 0;
+	var oldBillAmount = 0;
+	var actualCPM = 0;
+	var totalViews = 0;
+	var totalIngested = 0;
+
+	var errorRows = [];
+
+    /* ===============================
+       GROUPED SITE DATA
+       KEY = ExternalID + SiteID
+    =============================== */
+    var siteGroup = {};
+    context.values.forEach(function(v) {
+        var r;
+		try {
+			r = JSON.parse(v);
+		} catch (e) {
+			return;
+		}
+        if (!vbDate) vbDate = r.vbDate;
+		if (!billDueDate) billDueDate = r.billDueDate;
+        var externalId = r.externalId || '';
+		var siteId = r.siteId || '';
+        var siteName = r.siteName || '';
+        var siteURL = r.siteURL || '';
+        var views = Number(r.smartView) || 0;
+        var ingested = Number(r.ingested) || 0;
+		var isVideo = externalId.toLowerCase().indexOf('video') !== -1;
+			
+		if (isVideo) {
+			hasVideo = true;
+			return;
+		}
+		totalViews += views;
+        var groupKey = externalId + '|' + siteId;
+        if (!siteGroup[groupKey]) {
+            siteGroup[groupKey] = {
+                externalId: externalId,
+                siteId: siteId,
+                siteName: siteName,
+                siteURL: siteURL,
+                smartViews: 0,
+                ingested: 0,
+                maxView: 0
+            };
+        }
+        /* SmartViews always sum */
+        siteGroup[groupKey].smartViews += views;
+        /* Ingested should NOT sum */
+        siteGroup[groupKey].ingested = Math.max(
+            siteGroup[groupKey].ingested,
+            ingested
+        );
+        /* Track highest view row for URL */
+        if (views > siteGroup[groupKey].maxView) {
+            siteGroup[groupKey].maxView = views;
+            siteGroup[groupKey].siteURL = siteURL;
+            siteGroup[groupKey].siteId = siteId;
+        }
+    });
+
+    /* ===============================
+       CALCULATE TOTAL INGESTED
+    =============================== */
+    Object.keys(siteGroup).forEach(function(k) {
+        totalIngested += siteGroup[k].ingested;
+    });
+
+    /* ===============================
+       BILLING EXECUTION
+    =============================== */
+    try {
+        /* ---- ITEM RESOLUTION ---- */
+		itemId = itemSearch(publisherItemName);
+		vendorId = vendorSearch(itemId);
+		if (!vendorId) {
+			throw new Error('Vendor or Pricing Tier Not Found');
+		}
+		
+		
+		/* ===============================
+		   VIDEO MG LOGIC (ADD HERE)
+		=============================== */
+		if (hasVideo) 
+		{
+			//videoMG = getProgramMGByName(publisherItemName + ' Video', vbDate);
+			  // Step 1: Build video item name (normalized)
+			var videoItemName = publisherItemName.toLowerCase() + ' video';
+
+			// Step 2: Resolve item internal ID
+			var videoItemId = itemSearch(videoItemName);
+
+			log.debug("Video Item Resolution", {
+				baseItem: publisherItemName,
+				videoItemName: videoItemName,
+				videoItemId: videoItemId
+			});
+
+			// Step 3: Get MG using INTERNAL ID
+			if (videoItemId) {
+				videoMG = getProgramMGByName(videoItemId, vbDate);
+			} else {
+				log.error("VIDEO ITEM NOT FOUND", videoItemName);
+				videoMG = 0;
+			}
+		} else {
+			videoMG = 0;
+		}
+		log.debug("Final Video MG", videoMG);
+		
+		
+        /* ---- MINIMUM ARTICLE COMMITMENT ---- */
+        var vendorFields = search.lookupFields({
+            type: 'vendor',
+            id: vendorId,
+            columns: ['custentity_min_article_commitment']
+        });
+        var minimumCommitment = Number(vendorFields.custentity_min_article_commitment) || 0;
+        log.audit('Minimum Commitment Check', {
+            minimumCommitment: minimumCommitment,
+            totalIngested: totalIngested
+        });
+        /* ===============================
+           STEP 1 : OLD BILL AMOUNT
+        =============================== */
+        oldBillAmount = Number(getMonthlyFee(itemId, totalViews)) || 0;
+        log.audit('Old Bill Amount', {
+            oldBillAmount: oldBillAmount,
+            totalViews: totalViews
+        });
+
+        /* ===============================
+           STEP 2 : SV1ST LOGIC
+        =============================== */
+        if (oldBillAmount === 0) 
+		{
+            monthlyFee = 0;
+        }
+        else if (minimumCommitment < totalIngested) 
+		{
+           monthlyFee = oldBillAmount;
+            log.audit('CASE 1 - OLD BILL', {
+                ingested: totalIngested
+            });
+        }
+        else {
+            if (totalViews && totalViews !== 0) {
+				actualCPM = parseFloat((oldBillAmount / (totalViews / 1000)).toFixed(2));
+			}
+            log.audit('Actual CPM', actualCPM);
+            if (actualCPM < 2) {
+                monthlyFee = oldBillAmount;
+            }
+            else {
+                monthlyFee = 0;
+            }
+        }
+        /* ===============================
+           BUILD SITELINE MAP
+           (compatible with createBill)
+        =============================== */
+        var siteMap = {};
+        var siteGroupedMap = {};
+        Object.keys(siteGroup).forEach(function(k) {
+            var g = siteGroup[k];
+            siteMap[g.siteName] = {
+                siteName: g.siteName,
+                siteId: g.siteId,
+                siteURL: g.siteURL,
+                smartView: g.smartViews,
+                maxView: g.maxView
+            };
+            siteGroupedMap[g.siteId] = g.ingested;
+        });
+        /* ===============================
+           CREATE BILL
+        =============================== */
+		log.debug("videoMG before bill", videoMG);
+        createBill(
+			vendorId,
+			itemId,
+			monthlyFee,
+			siteMap,
+			siteGroupedMap,
+			totalViews,
+			vbDate,
+			PUB_BILL_FORM,
+			billDueDate,
+			totalIngested,
+			actualCPM,
+			oldBillAmount,
+			videoMG
+		);
+    }
+    catch (e) {
+        var errorStage = 'UNKNOWN';
+            if (!itemId) {
+                errorStage = 'ITEM_RESOLUTION';
+            } else if (!vendorId) {
+                errorStage = 'VENDOR_RESOLUTION';
+            } else if (monthlyFee === null || monthlyFee === undefined) {
+				errorStage = 'PRICING_TIER';
+			}
+            context.values.forEach(function(v) {
+                var rec = JSON.parse(v);
+                var row = rec.originalRow.slice();
+                row.push(
+					getActionHint(errorStage)
+				);
+                errorRows.push(row.map(csvEscape).join(','));
+            });
+		log.error('CREATE BILL ERROR', e);
+    }
+    /* ===============================
+       REDUCE OUTPUT
+    =============================== */
+    context.write({
+        key: fileId,
+        value: errorRows.length
+            ? { errorData: errorRows.join('\r\n') }
+            : {}
+    });
+}
+
+/**
+     * Resolves Item Internal ID using Publisher (Vendor) Name.
+     *
+     * BUSINESS PURPOSE:
+     * - Each Publisher must have a corresponding Non-Inventory Item
+     * - This item is used for Vendor Bill line creation
+     *
+     * SEARCH RULES:
+     * 1. Item Type must be Non-Inventory
+     * 2. Item Name must exactly match Publisher Name
+     * 3. Item must be Active
+     *
+     * @param {string} publisherItemName - Publisher (Vendor) Name
+     * @returns {number|null} Item Internal ID or null if not found
+     */
+    function itemSearch(publisherItemName) {
+        try {
+            var itemId = null;
+
+            /**
+             * Search Non-Inventory Items matching Publisher Name
+             */
+            var itemSearchObj = search.create({
+                type: "noninventoryitem",
+                filters: [
+                    ["type", "anyof", "NonInvtPart"], // Non-Inventory Item
+                    "AND",
+                    ["name", "is", publisherItemName], // Exact name match
+                    "AND",
+                    ["isinactive", "is", "F"] // Active items only
+                ],
+                columns: [
+                    search.createColumn({
+                        name: "internalid"
+                    })
+                ]
+            });
+
+            // Log item count for traceability
+            var count = itemSearchObj.runPaged().count;
+            log.debug("Item Search Result Count", {
+                publisherName: publisherItemName,
+                count: count
+            });
+
+            /**
+             * No item found ??N configuration issue
+             * Billing cannot proceed without an Item
+             */
+            if (count === 0) {
+                log.error({
+                    title: "Item Search Failed",
+                    details: {
+                        publisherName: publisherItemName,
+                        message: "No active Non-Inventory Item found"
+                    }
+                });
+                return null;
+            }
+
+            /**
+             * Retrieve first matching item
+             * Assumption: One Item per Publisher
+             */
+            itemSearchObj.run().each(function(result) {
+                itemId = result.getValue({
+                    name: 'internalid'
+                });
+                return false; // stop after first match
+            });
+
+            // Log resolved Item ID
+            log.debug({
+                title: "Item Resolved",
+                details: {
+                    publisherName: publisherItemName,
+                    itemId: itemId
+                }
+            });
+
+            return itemId;
+
+        } catch (e) {
+            log.error({
+                title: "Error in itemSearch",
+                details: e
+            });
+            return null;
+        }
+    }
+	
+
+function getProgramMGByName(publisherItemId, vbDate) {
+    try {
+        /* ===============================
+           VALIDATE BILLING DATE
+        =============================== */
+        var billDate = parseDate(vbDate);
+        if (!billDate) {
+            log.error('Invalid vbDate', vbDate);
+            return 0;
+        }
+
+        /* ===============================
+           BILLING MONTH WINDOW
+        =============================== */
+        var monthStart = new Date(
+            billDate.getFullYear(),
+            billDate.getMonth(),
+            1
+        );
+
+        var monthEnd = new Date(
+            billDate.getFullYear(),
+            billDate.getMonth() + 1,
+            0
+        );
+
+        var totalDays = monthEnd.getDate();
+        var finalMG = 0;
+
+        log.debug("MG Input", {
+            publisherItemId: publisherItemId,
+            vbDate: vbDate,
+            monthStart: monthStart,
+            monthEnd: monthEnd
+        });
+
+        /* ===============================
+           SEARCH PROGRAM RECORDS
+        =============================== */
+        var programSearch = search.create({
+            type: "customrecord_publishers_url_link",
+            filters: [
+                ["isinactive", "is", "F"],
+                "AND",
+                ["custrecord_publisher_item_name_number", "anyof", publisherItemId],
+                "AND",
+                ["custrecord_beyond", "is", "T"]
+            ],
+            columns: [
+                "custrecord_flat_fee",
+                "custrecord_beyond_start_date",
+                "custrecord_pp_end_date"
+            ]
+        });
+
+        programSearch.run().each(function (res) {
+
+		var mg = Number(res.getValue("custrecord_flat_fee")) || 0;
+            if (mg <= 0) return true;
+
+
+			var rawStart = res.getValue("custrecord_beyond_start_date");
+			var rawEnd   = res.getValue("custrecord_pp_end_date");
+
+			log.debug("RAW PROGRAM DATES", {
+				rawStart: rawStart,
+				rawEnd: rawEnd
+			});
+
+            var progStart = parseDate(rawStart);
+			var progEnd   = parseDate(rawEnd);
+
+			log.debug("PARSED PROGRAM DATES", {
+				progStart: progStart,
+				progEnd: progEnd
+			});
+
+            if (!progStart) return true;
+
+            log.debug("Program Record", {
+                mg: mg,
+                progStart: progStart,
+                progEnd: progEnd
+            });
+
+            /* ===============================
+               FULL MG (ONLY TRUE CASE)
+               - No end date
+               - Started BEFORE billing month
+            =============================== */
+            /* FULL MG */
+			if (!progEnd && progStart <= monthEnd) {
+				finalMG = Math.max(finalMG, mg);
+				return true;
+			}
+
+            /* ===============================
+               SKIP NON-OVERLAP
+            =============================== */
+            if (progStart > monthEnd) return true;
+            if (progEnd && progEnd < monthStart) return true;
+
+
+			log.debug("PRORATION INPUT", {
+				progStart: progStart,
+				progEnd: progEnd,
+				monthStart: monthStart,
+				monthEnd: monthEnd
+			});
+
+            /* ===============================
+               PRORATION
+            =============================== */
+			
+			var overlapStart = progStart > monthStart ? progStart : monthStart;
+
+			var overlapEnd = progEnd
+				? (progEnd < monthEnd ? progEnd : monthEnd)
+				: monthEnd;
+
+			log.debug("OVERLAP BEFORE NORMALIZE", {
+				overlapStart: overlapStart,
+				overlapEnd: overlapEnd
+			});
+
+			overlapStart = normalizeDate(overlapStart);
+			overlapEnd   = normalizeDate(overlapEnd);
+
+			log.debug("OVERLAP AFTER NORMALIZE", {
+				overlapStart: overlapStart,
+				overlapEnd: overlapEnd,
+				diffDays: (overlapEnd - overlapStart) / 86400000
+			});
+			
+			var activeDays = Math.round(
+				(overlapEnd - overlapStart) / 86400000
+			) + 1;
+
+			log.debug("FINAL ACTIVE DAYS", activeDays);
+
+            var proratedMG = (mg * activeDays) / totalDays;
+
+            log.debug("PRORATED MG", {
+                activeDays: activeDays,
+                totalDays: totalDays,
+                proratedMG: proratedMG
+            });
+
+            finalMG = Math.max(finalMG, proratedMG);
+
+            return true;
+        });
+
+        finalMG = parseFloat((finalMG || 0).toFixed(2));
+
+        log.audit("Final Video MG", {
+            publisherItemId: publisherItemId,
+            finalMG: finalMG
+        });
+
+        return finalMG;
+
+    } catch (e) {
+        log.error('Error in getProgramMGByName', e);
+        return 0;
+    }
+}
+
+
+function normalizeDate(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+
+/**
+     * Resolves Vendor Internal ID using Publisher Item reference.
+     *
+     * BUSINESS PURPOSE:
+     * - Each Publisher Item is linked to exactly one active Vendor
+     * - Vendor must be eligible for billing (category + pricing tier mapping)
+     *
+     * FILTER LOGIC SUMMARY:
+     * 1. Vendor is mapped to the Publisher Item
+     * 2. Vendor category is eligible (monthly publishers/ quarterly publishers)
+     * 3. Vendor has at least one active Pricing Tier record
+     * 4. Vendor is active OR has no payment end date
+     *
+     * @param {number} publisherItemName - Publisher Item Internal ID
+     * @returns {number|null} Vendor Internal ID or null if not found
+     */
+    function vendorSearch(publisherItemName) {
+        try {
+            var vendorId = null;
+
+            /**
+             * Search active Vendors linked to the Publisher Item
+             * through Pricing Tier configuration.
+             */
+            var vendorSearchObj = search.create({
+                type: "vendor",
+                filters: [
+                    // Vendor is linked to Publisher Item
+                    ["custentity_publisher_item_name_number_n", "anyof", publisherItemName],
+                    "AND",
+
+                    // Only eligible vendor categories (Monthly Publisher / Quarterly Publishers)
+                    ["category", "anyof", "6", "5"],
+                    "AND",
+
+                    // Vendor must have active Pricing Tier linked to the same Publisher Item
+                    ["custrecord_pricing_tier_publisher.custrecord_pubr_item_name_num", "anyof", publisherItemName],
+                    "AND",
+                    ["custrecord_pricing_tier_publisher.isinactive", "is", "F"],
+                    "AND",
+
+                    // Vendor must be active OR have no payment end date
+                    ["isinactive", "is", "F"]
+                ],
+                columns: [
+                    search.createColumn({
+                        name: "internalid"
+                    })
+                ]
+            });
+
+            // Log total vendors found for traceability
+            var count = vendorSearchObj.runPaged().count;
+            log.debug("vendorSearchResultCount", count);
+
+            /**
+             * No vendor found ??N configuration issue
+             * Billing will be skipped for this publisher
+             */
+            if (count === 0) {
+                log.error({
+                    title: "Vendor Search Failed",
+                    details: {
+                        publisherItemId: publisherItemName,
+                        message: "No eligible vendor found for publisher item"
+                    }
+                });
+                return null;
+            }
+
+            /**
+             * Fetch first matching vendor
+             * Assumption: One active vendor per Publisher Item
+             */
+            vendorSearchObj.run().each(function(result) {
+                vendorId = result.getValue({
+                    name: 'internalid'
+                });
+                return false; // stop after first match
+            });
+
+            // Log resolved Vendor ID
+            log.debug({
+                title: "Vendor Resolved",
+                details: {
+                    publisherItemId: publisherItemName,
+                    vendorId: vendorId
+                }
+            });
+
+            return vendorId;
+
+        } catch (e) {
+            log.error({
+                title: "Error in vendorSearch",
+                details: e
+            });
+            return null;
+        }
+    }
+	
+	/* ==========================================================
+     * Remaining helper functions (Monthly Fee, Vendor Search,
+     * Item Search, Bonus logic, Summarize) remain FUNCTIONALLY
+     * equivalent to legacy implementation with cleaner flow.
+     * ========================================================== */
+    /**
+     * Calculates the Monthly Fee for a Publisher based on total page views
+     * and pricing tiers defined in the Pricing Tier custom record.
+     *
+     * Pricing Types Supported:
+     * 1 = Monthly Fee
+     * 2 = Flat Rate
+     * 3 = CPM Rate
+     * 4 = Flat + CPM (overage calculation)
+     *
+     * @param {number} itemId  - Publisher Item Internal ID
+     * @param {number} vbQty   - Total Page Views for the billing period
+     * @returns {string} Monthly fee formatted to 2 decimal places
+     */
+    function getMonthlyFee(itemId, vbQty) {
+        try {
+            var monthlyFee = 0;
+
+            /**
+             * Search Pricing Tier records linked to the Publisher Item
+             * Only active pricing tiers are considered.
+             */
+            var pricingSearch = search.create({
+                type: "customrecord_sn_pricing_tier_list",
+                filters: [
+                    ["custrecord_pubr_item_name_num", "anyof", itemId],
+                    "AND",
+                    ["isinactive", "is", "F"]
+                ],
+                columns: [
+                    "custrecord_sn_monthly_page_view", // Page view range (e.g. 10k-50k, 100k+)
+                    "custrecord_sn_monthly_view", // Monthly Fee
+                    "custrecord_cpm_rate", // CPM Rate
+                    "custrecord_flat_rate", // Flat Rate
+                    "custrecord_pricing_type" // Pricing Type
+                ]
+            });
+
+            var results = pricingSearch.run().getRange({
+                start: 0,
+                end: 999
+            });
+
+            // No pricing tiers found ??N return 0
+            if (!results || !results.length) return "0.00";
+
+            /**
+             * Iterate through pricing tiers and apply the first matching tier
+             * based on total page views (vbQty).
+             */
+            for (var i = 0; i < results.length; i++) {
+
+                var pageView = results[i].getValue('custrecord_sn_monthly_page_view');
+                var priceType = Number(results[i].getValue('custrecord_pricing_type'));
+
+                var flatRate = Number(results[i].getValue('custrecord_flat_rate')) || 0;
+                var cpmRate = Number(results[i].getValue('custrecord_cpm_rate')) || 0;
+                var monthlyVal = Number(results[i].getValue('custrecord_sn_monthly_view')) || 0;
+
+                /* ==========================================================
+                 * CASE 1: PAGE VIEW RANGE EXISTS
+                 * ========================================================== */
+                if (pageView) {
+
+                    /**
+                     * Range-based tier (e.g. 10,000-50,000)
+                     */
+                    if (pageView.indexOf('-') !== -1) {
+                        var range = pageView.split('-');
+                        var view1 = Number(range[0].replace(/,/g, ''));
+                        var view2 = Number(range[1].replace(/,/g, ''));
+
+                        if (vbQty >= view1 && vbQty <= view2) {
+
+                            // Monthly Fee
+                            if (priceType === 1) {
+                                monthlyFee = monthlyVal;
+                            }
+                            // Flat Rate
+                            else if (priceType === 2) {
+                                monthlyFee = flatRate;
+                            }
+                            // CPM Rate
+                            else if (priceType === 3) {
+                                monthlyFee = (vbQty / 1000) * cpmRate;
+                            }
+                            break; // Stop once matching tier is applied
+                        }
+                    }
+
+                    /**
+                     * Plus-based tier (e.g. 100,000+)
+                     */
+                    if (pageView.indexOf('+') !== -1) {
+                        var view = Number(pageView.replace('+', '').replace(/,/g, ''));
+
+                        if (vbQty >= view) {
+
+                            // Monthly Fee
+                            if (priceType === 1) {
+                                monthlyFee = monthlyVal;
+                            }
+                            // Flat Rate
+                            else if (priceType === 2) {
+                                monthlyFee = flatRate;
+                            }
+                            // CPM Rate
+                            else if (priceType === 3) {
+                                monthlyFee = (vbQty / 1000) * cpmRate;
+                            }
+                            // Flat + CPM overage
+                            else if (priceType === 4) {
+                                var feeDiff = vbQty - view;
+
+                                if (feeDiff <= 0) {
+                                    monthlyFee = flatRate;
+                                } else {
+                                    monthlyFee = flatRate + ((feeDiff / 1000) * cpmRate);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                /* ==========================================================
+                 * CASE 2: PAGE VIEW FIELD IS EMPTY
+                 * Used when pricing is independent of view ranges
+                 * ========================================================== */
+                else {
+                    // Flat Rate only
+                    if (priceType === 2) {
+                        monthlyFee = flatRate;
+                        break;
+                    }
+                    // CPM Rate only
+                    else if (priceType === 3) {
+                        monthlyFee = (vbQty / 1000) * cpmRate;
+                        break;
+                    }
+                }
+            }
+
+            // Return formatted monthly fee
+            return parseFloat(monthlyFee || 0).toFixed(2);
+
+        } catch (e) {
+            log.error('Error in Getting Monthly fee:', e);
+            return "0.00";
+        }
+    }
+	
+	/* ==========================================================
+     * CREATE VENDOR BILL (WITH BEYOND BONUS)
+     * ==========================================================
+     *
+     * BUSINESS PURPOSE:
+     * - Creates one Vendor Bill per Publisher per billing file
+     * - Includes:
+     *   1. Zero-amount site detail lines (for reporting & audit)
+     *   2. Monthly Fee line
+     *   3. Optional Beyond Bonus line (Publisher or Brand level)
+     *
+     * KEY ASSUMPTIONS:
+     * - One Vendor Bill per Publisher per billing period
+     * - Monthly Fee is already calculated before calling this function
+     * - Beyond Bonus eligibility is controlled at Vendor level
+     */
+    function createBill(
+			vendorId,
+			itemId,
+			monthlyFee,
+			siteMap,
+			siteGroupedMap,
+			totalViews,
+			vbDate,
+			PUB_BILL_FORM,
+			billDueDate,
+			totalIngested,
+			actualCPM,
+			oldBillAmount, 
+			videoMG
+		) {
+
+        /* ----------------------------------------------------------
+         * BILL DATE & DUE DATE CALCULATION
+         * ----------------------------------------------------------
+         * - Bill Date = End of month of billing file date
+         * - Due Date = Provided directly from billing file
+         */
+        // var fileDate = parseDate(vbDate);
+		
+        // var billDate = getEndOfMonth(fileDate);
+        // var dueDt = parseDate(billDueDate);
+		//var dueDt = parseDate(billDueDate) || billDate;
+		var fileDate = parseDate(vbDate);
+		var billDate = parseDate(vbDate);
+		var dueDt = parseDate(billDueDate) || billDate;
+		
+
+
+        log.debug("Vendor Bill Dates", {
+            billDate: billDate,
+            dueDate: dueDt
+        });
+        var siteIdArray = [];
+        /* ----------------------------------------------------------
+         * CREATE VENDOR BILL HEADER
+         * ---------------------------------------------------------- */
+        var vb = record.create({
+            type: record.Type.VENDOR_BILL,
+            isDynamic: true,
+            defaultValues: {
+                customform: PUB_BILL_FORM
+            }
+        });
+
+        vb.setValue('entity', vendorId);
+        vb.setValue('subsidiary', SUBSIDIARY_ID);
+        vb.setValue('currency', CURRENCY_ID);
+        vb.setValue('trandate', billDate);
+        vb.setValue('duedate', dueDt);
+        vb.setValue('department', DEPARTMENT_ID);
+        vb.setValue('memo', 'SV1st');
+		vb.setValue('custbody_placeholder_revshare_period', null);
+
+        /* ----------------------------------------------------------
+         * PUBLISHER PROGRAM ELIGIBILITY CHECK
+         * ----------------------------------------------------------
+         * Beyond Bonus applies only if:
+         * - Publisher Program start date exists
+         * - Program is not marked inactive
+         * - Billing file date >= Program start date
+         */
+        var vendorFields = search.lookupFields({
+            type: 'vendor',
+            id: vendorId,
+            columns: [
+                'custentity_pprog_calculation', // Publisher / Brand
+                'custentity_beyond_percentage', // Bonus %
+                'custentity_beyond_mg', // Minimum Guarantee
+                'custentity_pp_start_date', // Program start date
+                'custentity_inactive_publisher_program'
+            ]
+        });
+
+        var bonusAmt = 0;
+        var ppActive = false;
+
+        if (vendorFields.custentity_pp_start_date && (vendorFields.custentity_inactive_publisher_program === false || vendorFields.custentity_inactive_publisher_program === 'F')) {
+            var startDt = parseDate(vendorFields.custentity_pp_start_date);
+            log.debug("fileDate.getTime()", fileDate.getTime());
+            log.debug("startDt.getTime()", startDt.getTime());
+            if (fileDate && startDt && fileDate.getTime() >= startDt.getTime()) {
+                ppActive = true;
+            }
+        }
+
+        /* ----------------------------------------------------------
+         * BEYOND BONUS CALCULATION
+         * ----------------------------------------------------------
+         * Calculation Types:
+         * - Publisher: Bonus applied at total publisher level
+         * - Brand: Bonus allocated proportionally to matching sites
+         */
+        if (ppActive && isValid(vendorFields.custentity_pprog_calculation)) 
+		{
+
+            var calcType = vendorFields.custentity_pprog_calculation[0].text;
+            var percent = Number(vendorFields.custentity_beyond_percentage) || 0;
+            var mgValue = Number(vendorFields.custentity_beyond_mg) || 0;
+
+            // Base bonus = % of Monthly Fee
+            var baseBonus = Math.max((monthlyFee * percent) / 100, 0);
+
+            log.debug("Beyond Bonus Base Calculation", {
+                calcType: calcType,
+                percent: percent,
+                baseBonus: baseBonus,
+                mgValue: mgValue
+            });
+
+            /* ----------------------------
+             * PUBLISHER-LEVEL BONUS
+             * ---------------------------- */
+            if (calcType === 'Publisher') {
+                bonusAmt = Math.max(baseBonus, mgValue);
+            }
+
+            /* ----------------------------
+             * BRAND-LEVEL BONUS
+             * ---------------------------- */
+            else if (calcType === 'Brand') {
+
+                var brandUrls = getBrandUrlData(vendorId, vbDate, siteIdArray, itemId);
+                log.debug("Brand URLs Found", brandUrls.length);
+
+                if (brandUrls.length) {
+
+                    // Build lookup map for faster matching
+                    var brandMap = {};
+                    brandUrls.forEach(function(b) {
+                        if (b.siteId) brandMap['ID_' + b.siteId] = true;
+                        if (b.siteURL) brandMap['URL_' + b.siteURL] = true;
+                    });
+
+                    var brandBonus = 0;
+
+                    // Allocate bonus proportionally by site page views
+                    Object.keys(siteMap).forEach(function(k) {
+                        var s = siteMap[k];
+                        if (
+                            brandMap['ID_' + s.siteId] ||
+                            brandMap['URL_' + s.siteURL]
+                        ) {
+                            brandBonus +=
+                                (baseBonus * s.smartView) / (totalViews || 1);
+                        }
+                    });
+
+                    bonusAmt = Math.max(brandBonus, mgValue);
+                }
+            }
+        }
+
+        /* ----------------------------------------------------------
+         * SITE DETAIL LINES (ZERO AMOUNT)
+         * ----------------------------------------------------------
+         * Purpose:
+         * - Capture site-level reporting data
+         * - No financial impact
+         */
+        Object.keys(siteMap).forEach(function(k) {
+            var s = siteMap[k];
+
+            vb.selectNewLine({
+                sublistId: 'item'
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'item',
+                value: itemId
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'quantity',
+                value: 0
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'rate',
+                value: 0
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'amount',
+                value: 0
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_site_id',
+                value: s.siteId
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_website_name',
+                value: s.siteName
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_dp_pubwebsiteurl',
+                value: s.siteURL
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_pages_views',
+                value: s.smartView
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'taxcode',
+                value: TAX_CODE
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'department',
+                value: DEPARTMENT_ID
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_ingested_value',
+                value: siteGroupedMap[s.siteId] || 0
+            });
+            vb.commitLine({
+                sublistId: 'item'
+            });
+        });
+
+
+        /* ----------------------------------------------------------
+         * BEYOND BONUS LINE (OPTIONAL)
+         * ---------------------------------------------------------- */
+        if (bonusAmt > 0) {
+            bonusAmt = parseFloat(bonusAmt);
+            var mL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            var d_pmDate = format.parse({
+                value: fileDate,
+                type: format.Type.DATE
+            })
+            var monthName = mL[d_pmDate.getMonth()]
+            var stringName = "Beta Payment for " + monthName + " " + d_pmDate.getFullYear() + "|" + bonusAmt;
+
+            vb.selectNewLine({
+                sublistId: 'item'
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'item',
+                value: BEYOND_ITEM_ID,
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'quantity',
+                value: 1,
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({ //Set Tax Code as Tax free
+                sublistId: 'item',
+                fieldId: 'taxcode',
+                value: TAX_CODE,
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_website_name',
+                value: "N/A",
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_dp_pubwebsiteurl',
+                value: "N/A",
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_pages_views',
+                value: 0,
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'rate',
+                value: bonusAmt,
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'amount',
+                value: bonusAmt,
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'custcol_business_category',
+                value: BUSINESS_CATEGORY_ID,
+                ignoreFieldChange: true
+            });
+            vb.setCurrentSublistValue({
+                sublistId: 'item',
+                fieldId: 'department',
+                value: BEYOND_DEPARTMENT_ID,
+                ignoreFieldChange: true
+            });
+
+            vb.commitLine({
+                sublistId: 'item'
+            });
+
+            vb.setValue("custbody_beyond_details", stringName);
+        }
+		
+		if (videoMG > 0) {
+
+			vb.selectNewLine({ sublistId: 'item' });
+
+			vb.setCurrentSublistValue({
+				sublistId: 'item',
+				fieldId: 'item',
+				value: VIDEO_ITEM
+			});
+
+			vb.setCurrentSublistValue({
+				sublistId: 'item',
+				fieldId: 'quantity',
+				value: 1
+			});
+
+			vb.setCurrentSublistValue({
+				sublistId: 'item',
+				fieldId: 'rate',
+				value: videoMG
+			});
+
+			vb.setCurrentSublistValue({
+				sublistId: 'item',
+				fieldId: 'amount',
+				value: videoMG
+			});
+
+			vb.setCurrentSublistValue({
+				sublistId: 'item',
+				fieldId: 'taxcode',
+				value: TAX_CODE
+			});
+			vb.setCurrentSublistValue({
+					sublistId: 'item',
+					fieldId: 'department',
+					value: DEPARTMENT_ID
+				});
+
+			vb.commitLine({ sublistId: 'item' });
+		}
+		
+        /* ----------------------------------------------------------
+         * MONTHLY FEE LINE
+         * ---------------------------------------------------------- */
+        vb.selectNewLine({
+            sublistId: 'item'
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'item',
+            value: itemId
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'quantity',
+            value: 1
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'rate',
+            value: monthlyFee
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'amount',
+            value: monthlyFee
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'custcol_pages_views',
+            value: totalViews
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'department',
+            value: DEPARTMENT_ID
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'taxcode',
+            value: TAX_CODE
+        });
+        vb.setCurrentSublistValue({
+            sublistId: 'item',
+            fieldId: 'custcol_ingested_value',
+            value: totalIngested
+        });
+		vb.setCurrentSublistValue({
+			sublistId: 'item',
+			fieldId: 'custcol_actual_cpm_rate',
+			value: actualCPM || 0
+		});
+
+		vb.setCurrentSublistValue({
+			sublistId: 'item',
+			fieldId: 'custcol_old_bill_amount',
+			value: oldBillAmount  || 0
+		});
+
+        vb.commitLine({
+            sublistId: 'item'
+        });
+
+        /* ----------------------------------------------------------
+         * FINALIZE & SAVE VENDOR BILL
+         * ---------------------------------------------------------- */
+        vb.setValue('custbody_publisher_vendor_bill', true);
+
+        var vbSaved = vb.save({
+            enableSourcing: true,
+            ignoreMandatoryFields: true
+        });
+		log.audit('Final Billing Summary', {
+			vendor: vendorId,
+			oldBillAmount: oldBillAmount,
+			finalBillAmount: monthlyFee,
+			actualCPM: actualCPM,
+			totalViews: totalViews,
+			totalIngested: totalIngested
+		});
+
+        log.audit("Vendor Bill Created", vbSaved);
+        return vbSaved;
+    }
+	
+	/* ==========================================================
+     * BRAND URL SEARCH
+     * ==========================================================
+     *
+     * BUSINESS PURPOSE:
+     * - Retrieves Brand-level Site IDs and URLs eligible for
+     *   Beyond Bonus (Brand calculation type)
+     * - Used to proportionally allocate Beyond Bonus
+     *   across eligible brand sites
+     *
+     * ELIGIBILITY RULES:
+     * - Brand URL record must be active
+     * - Linked to the same Vendor & Publisher Item
+     * - Beyond flag must be enabled
+     * - Publisher Program must be active
+     * - Beyond Start Date ? Billing File Date
+     *
+     * @param {number} vendor       - Vendor Internal ID
+     * @param {string} rVbDate      - Billing file date (string)
+     * @param {Array}  siteIdArray  - Optional array to collect site IDs
+     * @param {number} itemId       - Publisher Item Internal ID
+     *
+     * @returns {Array<Object>} Array of eligible brand objects:
+     *   [{ siteId: '123', siteURL: 'example.com' }]
+     */
+    function getBrandUrlData(vendor, rVbDate, siteIdArray, itemId) 
+	{
+
+        var BrandUrlConsider = [];
+
+        /* ----------------------------------------------------------
+         * SAFE DATE PARSER
+         * ---------------------------------------------------------- */
+        var fileDateCompWithURL = parseDate(rVbDate);
+        log.debug("Billing File Date (Brand Comparison)", fileDateCompWithURL);
+
+        // If billing date is invalid, no brand URLs are eligible
+        if (!fileDateCompWithURL) return BrandUrlConsider;
+
+        /* ----------------------------------------------------------
+         * BRAND URL SEARCH
+         * ---------------------------------------------------------- */
+        var urlSearch = search.create({
+            type: "customrecord_publishers_url_link",
+            filters: [
+                // Active brand URL records only
+                ["isinactive", "is", "F"],
+                "AND",
+
+                // Match Vendor (Publisher)
+                ["custrecord_publisher_name_vendor", "anyof", vendor],
+                "AND",
+
+                // Match Publisher Item
+                ["custrecord_publisher_item_name_number", "anyof", itemId],
+                "AND",
+
+                // Beyond bonus must be enabled for the brand
+                ["custrecord_beyond", "is", "T"],
+                "AND",
+
+                // Publisher Program must be active
+                ["custrecord_publisher_name_vendor.custentity_inactive_publisher_program", "is", "F"]
+            ],
+            columns: [
+                "custrecord_publisher_url", // Brand URL
+                "custrecord_beyond_start_date", // Beyond eligibility start date
+                "custrecord_site_id" // Site ID
+            ]
+        });
+
+        /* ----------------------------------------------------------
+         * PROCESS BRAND URL RESULTS
+         * ---------------------------------------------------------- */
+        urlSearch.run().each(function(result) {
+
+            // Beyond start date validation
+            var pubBrandURLStartDate = result.getValue("custrecord_beyond_start_date");
+            log.debug("Brand Beyond Start Date", pubBrandURLStartDate);
+
+            if (!pubBrandURLStartDate) return true;
+
+            var startDate = parseDate(pubBrandURLStartDate);
+            log.debug("Parsed Brand Start Date", startDate);
+
+            // Skip brand URLs not eligible for this billing period
+            if (!startDate || fileDateCompWithURL.getTime() < startDate.getTime()) {
+                return true;
+            }
+
+            var obj = {};
+
+            // Capture Site ID (preferred identifier)
+            var siteID = result.getValue("custrecord_site_id");
+            log.debug("Brand Site ID", siteID);
+
+            if (siteID) {
+                obj.siteId = siteID;
+                siteIdArray && siteIdArray.push(siteID);
+            }
+
+            // Capture Site URL (fallback identifier)
+            var siteURL = result.getValue("custrecord_publisher_url");
+            log.debug("Brand Site URL", siteURL);
+
+            if (siteURL) {
+                obj.siteURL = siteURL;
+            }
+
+            // Add to result list only if at least one identifier exists
+            if (Object.keys(obj).length) {
+                BrandUrlConsider.push(obj);
+            }
+
+            return true;
+        });
+
+        /* ----------------------------------------------------------
+         * RETURN ELIGIBLE BRAND URL DATA
+         * ---------------------------------------------------------- */
+        return BrandUrlConsider;
+    }
+
+
+    /**
+     * Calculates the last day of the month for a given date.
+     *
+     * USED FOR:
+     * - Vendor Bill transaction date
+     *
+     * EXAMPLE:
+     * - Input: 2025-01-10
+     * - Output: 2025-01-31
+     *
+     * @param {Date} dateObj
+     * @returns {Date|null} End-of-month date or null
+     */
+    function getEndOfMonth(dateObj) {
+        if (!dateObj) return null;
+
+        return new Date(
+            dateObj.getFullYear(),
+            dateObj.getMonth() + 1,
+            0 // Day 0 returns the last day of the previous month
+        );
+    }
+	
+	/** ==========================================================
+     * SUMMARIZE
+     * ==========================================================
+     * PURPOSE:
+     * - Final stage of Map/Reduce execution
+     * - Collects reduce output
+     * - Generates error CSV (if any record failed)
+     * - Moves processed input files to Processed folder
+     * - Sends status email to key stakeholders
+     *
+     * NOTE:
+     * - This function DOES NOT affect billing logic
+     * - It is used only for reporting, cleanup, and notifications
+     =============================================================== */
+    function summarize(summary) 
+	{
+        try {
+            var fileIDArr = [];
+            var errorFlag = false;
+            var reduceErrorData, reduceValue, processedRecord;
+            var finalFileObject = [];
+            var processedDataCount = 0; // To store all file Id's
+            var fileId = ''; // To store all file Id's
+            var errFileIdS = ''; //To store Error File Id's
+            var errContent = ''; //To store Error Data's
+            var errFileHeader =
+				'PARENT_ID,PARENT_NAME,EXTERNAL_ID,SITE_ID,SITE_URL,' +
+				'DESCENDANT_SITE_LEVEL,NAME,DESCRIPTION,SMART_VIEW,' +
+				'MONTH_DT,ROLLUP_LEVEL,MONTH,NETSUITE_MONTH,' +
+				'QUARTER,MONTH_DUE_DATE,QUARTER_DUE_DATE,INGESTED_VALUE,ERROR';
+
+            errContent = errFileHeader + '\n';
+
+
+            summary.output.iterator().each(function(key, value) {
+                reduceValue = JSON.parse(value);
+
+                if (reduceValue.errorData) {
+                    errContent += reduceValue.errorData + '\n';
+                    errorFlag = true;
+                }
+
+                fileId = JSON.parse(key);
+                if (fileIDArr.indexOf(fileId) === -1) {
+                    fileIDArr.push(fileId);
+                }
+                return true;
+            });
+
+
+            //START: Create Error File
+            var errFileDownloaded = '';
+            var errFileName;
+            if (errorFlag) {
+                var srcFile = file.load({
+                    id: fileIDArr[0]
+                });
+                var baseName = srcFile.name.split('.')[0];
+                errFileName = baseName + '_ErrorFile.csv';
+
+                var errFileObj = file.create({
+                    name: errFileName,
+                    fileType: file.Type.CSV,
+                    contents: errContent,
+                    description: 'Monthly Publisher Billing Errors',
+                    folder: FOLDER_ERROR
+                });
+
+                errFileDownloaded = errFileObj.save();
+            } //END: Create Error File
+            if (fileIDArr.length > 0) {
+                //START: Move File to Processed Folder
+                var OrigFileName = '';
+                for (var fA = 0; fA < fileIDArr.length; fA++) {
+                    var fileObj = file.load({
+                        id: fileIDArr[fA]
+                    });
+                    //finalFileObject.push(fileObj);
+                    OrigFileName = fileObj.name;
+                    fileObj.folder = FOLDER_PROCESSED;
+                    fileId = fileObj.save();
+                } //END: Move File to Processed Folder
+
+                //START: Send Email's to Key stake-holder
+                var emailArr = [];
+                var emailCC = [];
+                //var senderId = -5;
+                var recipientsEmail = 'sridhar.syagamreddy@smartnews.com';
+                var recipientCC = 'seth.babu@smartnews.com';
+                emailArr.push(recipientsEmail);
+                emailCC.push(recipientCC);
+                var emailBody = '';
+                var emailSubject = 'Monthly Payment Publisher file Processed status';
+                if (errFileDownloaded) {
+                    emailBody = 'Hi,' + '\r\n' + '\r\n' + 'Monthly Payment Publisher File has been Processed.' + '\r\n' + ' Due to some error all records are not processed. To find the error details refer the attachment ' + '\r\n' + ' File Name: "' + OrigFileName + '"' + '\r\n' + 'Error File Name: "' + errFileName + '"' + '\r\n' + '\r\n' + 'Thanks,' + '\r\n' + 'Admin.'; //If Error then this body will be added in Email
+                    fileObject = file.load({
+                        id: errFileDownloaded
+                    });
+                    finalFileObject.push(fileObject);
+                } else {
+                    emailBody = 'Hi,' + '\r\n' + '\r\n' + 'Monthly Payment Publisher File has been Processed Successfully.' + '\r\n' + 'File Name: "' + OrigFileName + '"' + '\r\n' + '\r\n' + '\r\n' + 'Thanks,' + '\r\n' + 'Admin.'; //If No Error then this body will be added in Email
+                }
+                email.send({
+                    author: 611884,
+                    recipients: emailArr,
+                    cc: emailCC,
+                    subject: emailSubject,
+                    body: emailBody,
+                    attachments: finalFileObject
+                });
+            }
+        } catch (e) {
+            log.error('Error in summarize', e);
+        }
+    }
+    return {
+        getInputData: getInputData,
+        map: map,
+        reduce: reduce,
+        summarize: summarize
+    };
+});
+
